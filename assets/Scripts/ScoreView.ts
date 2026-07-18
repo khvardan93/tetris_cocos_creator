@@ -1,15 +1,11 @@
 import { _decorator, Component, Label } from 'cc';
-import { TetrisGame, GameEvent } from './TetrisGame';
+import { TetrisGame } from './TetrisGame';
+import { TetrisStats, StatsEvent } from './TetrisStats';
 const { ccclass, property } = _decorator;
 
-// Classic scoring table: index = lines cleared at once
-const LINE_POINTS = [0, 100, 300, 500, 800];
-const HARD_DROP_POINTS_PER_CELL = 2;
-
 /**
- * Owns the scoring rules AND the score display.
- * The game logic never computes points - it only reports facts
- * (lines cleared, cells hard-dropped) and this class decides their worth.
+ * Pure display. Formats numbers owned by TetrisStats into a label.
+ * No scoring rules, no persistence, no game knowledge beyond isGameOver.
  */
 @ccclass('ScoreView')
 export class ScoreView extends Component {
@@ -18,16 +14,12 @@ export class ScoreView extends Component {
     scoreLabel: Label | null = null;
 
     private game: TetrisGame = null!;
-    private score = 0;
-    private lines = 0;
+    private stats: TetrisStats = null!;
 
     onLoad() {
         this.game = this.getComponent(TetrisGame)!;
-        const ev = this.game.events;
-        ev.on(GameEvent.LinesCleared, this.onLinesCleared, this);
-        ev.on(GameEvent.HardDrop, this.onHardDrop, this);
-        ev.on(GameEvent.GameOver, this.refresh, this);
-        ev.on(GameEvent.GameReset, this.onReset, this);
+        this.stats = this.getComponent(TetrisStats)!;
+        this.stats.events.on(StatsEvent.Changed, this.refresh, this);
     }
 
     start() {
@@ -35,34 +27,24 @@ export class ScoreView extends Component {
     }
 
     onDestroy() {
-        const ev = this.game.events;
-        ev.off(GameEvent.LinesCleared, this.onLinesCleared, this);
-        ev.off(GameEvent.HardDrop, this.onHardDrop, this);
-        ev.off(GameEvent.GameOver, this.refresh, this);
-        ev.off(GameEvent.GameReset, this.onReset, this);
-    }
-
-    private onLinesCleared(count: number) {
-        this.lines += count;
-        this.score += LINE_POINTS[count] ?? 0;
-        this.refresh();
-    }
-
-    private onHardDrop(cells: number) {
-        this.score += cells * HARD_DROP_POINTS_PER_CELL;
-        this.refresh();
-    }
-
-    private onReset() {
-        this.score = 0;
-        this.lines = 0;
-        this.refresh();
+        this.stats.events.off(StatsEvent.Changed, this.refresh, this);
     }
 
     private refresh() {
         if (!this.scoreLabel) return;
-        this.scoreLabel.string = this.game.isGameOver
-            ? `GAME OVER\nScore: ${this.score}\nPress R`
-            : `Score: ${this.score}\nLines: ${this.lines}`;
+
+        if (this.game.isGameOver) {
+            const record = this.stats.isNewRecord ? '\nNEW RECORD!' : '';
+            this.scoreLabel.string =
+                `GAME OVER${record}\n` +
+                `Score: ${this.stats.score}\n` +
+                `High: ${this.stats.highScore}\n` +
+                `Press R`;
+        } else {
+            this.scoreLabel.string =
+                `Score: ${this.stats.score}\n` +
+                `Lines: ${this.stats.lines}\n` +
+                `High: ${this.stats.highScore}`;
+        }
     }
 }

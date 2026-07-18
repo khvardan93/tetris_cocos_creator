@@ -54,6 +54,12 @@ export class TetrisInput extends Component {
         }
 
         switch (event.keyCode) {
+            case KeyCode.ARROW_LEFT:
+                this.game.moveLeft();
+                break;
+            case KeyCode.ARROW_RIGHT:
+                this.game.moveRight();
+                break;
             case KeyCode.ARROW_DOWN:
                 this.game.softDropInput();
                 break;
