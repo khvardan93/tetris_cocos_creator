@@ -4,7 +4,6 @@ const { ccclass } = _decorator;
 export const COLS = 10;
 export const ROWS = 20;
 
-// Piece index in this array = color index - 1 (0 in the board means "empty")
 export const SHAPES: number[][][] = [
     [[1, 1, 1, 1]],                 // I
     [[1, 1], [1, 1]],               // O
@@ -16,19 +15,17 @@ export const SHAPES: number[][][] = [
 ];
 
 export enum GameEvent {
-    BoardChanged = 'board-changed',  // any visual state change -> views should redraw
-    LinesCleared = 'lines-cleared',  // payload: number of lines
+    BoardChanged = 'board-changed',
+    LinesCleared = 'lines-cleared',  // payload: number of lines (fires AFTER the clear animation)
     HardDrop     = 'hard-drop',      // payload: cells travelled
     GameOver     = 'game-over',
     GameReset    = 'game-reset',
 }
 
-/**
- * Pure game logic. Knows nothing about rendering, input devices, or UI.
- * Mutate it via the public command methods; observe it via `events` + getters.
- */
 @ccclass('TetrisGame')
 export class TetrisGame extends Component {
+
+    private static readonly CLEAR_DURATION = 0.45; // seconds of clear animation
 
     readonly events = new EventTarget();
 
@@ -38,34 +35,81 @@ export class TetrisGame extends Component {
     private _pieceRow = 0;
     private _pieceCol = 0;
     private _nextIdx = 0;
-    private _lines = 0;              // kept here only because gravity speed depends on it
+    private _lines = 0;
     private _gameOver = false;
+    private _dropLocker = true;
+
+    // Clearing state: while non-empty, gravity and input are frozen
+    // and the view animates these rows using clearProgress.
+    private _clearingRows: number[] = [];
+    private _clearTimer = 0;
 
     private dropTimer = 0;
     private dropInterval = 0.8;
-    private dropLocker = true;
 
-    // ---------- Read-only view of the state ----------
+    // ---------- Read-only state ----------
 
-    get board(): ReadonlyArray<ReadonlyArray<number>> { return this._board; }
-    get piece(): ReadonlyArray<ReadonlyArray<number>> { return this._piece; }
-    get pieceColor() { return this._pieceColor; }
-    get pieceRow()   { return this._pieceRow; }
-    get pieceCol()   { return this._pieceCol; }
-    get nextIndex()  { return this._nextIdx; }
-    get isGameOver() { return this._gameOver; }
+    get board(): ReadonlyArray<ReadonlyArray<number>> {
+        return this._board;
+    }
+
+    get piece(): ReadonlyArray<ReadonlyArray<number>> {
+        return this._piece;
+    }
+
+    get pieceColor() {
+        return this._pieceColor;
+    }
+
+    get pieceRow() {
+        return this._pieceRow;
+    }
+
+    get pieceCol() {
+        return this._pieceCol;
+    }
+
+    get nextIndex() {
+        return this._nextIdx;
+    }
+
+    get isGameOver() {
+        return this._gameOver;
+    }
+
+    get isClearing() {
+        return this._clearingRows.length > 0;
+    }
+
+    get clearingRows(): ReadonlyArray<number> {
+        return this._clearingRows;
+    }
+
+    /** 0..1 progress of the clear animation. The view renders from this. */
+    get clearProgress() {
+        return this.isClearing
+            ? Math.min(1, this._clearTimer / TetrisGame.CLEAR_DURATION)
+            : 0;
+    }
 
     // ---------- Lifecycle ----------
 
     onLoad() {
         this.initState();
-        // No events emitted here: listeners subscribe in their own onLoad,
-        // and onLoad order between components is not guaranteed.
-        // Views pull initial state in start() instead.
     }
 
     update(dt: number) {
         if (this._gameOver) return;
+
+        if (this.isClearing) {
+            this._clearTimer += dt;
+            if (this._clearTimer >= TetrisGame.CLEAR_DURATION) {
+                this.finishClearing();
+            }
+            this.emitChanged(); // animate every frame while clearing
+            return;             // gravity is frozen
+        }
+
         this.dropTimer += dt;
         if (this.dropTimer >= this.dropInterval) {
             this.dropTimer = 0;
@@ -73,23 +117,28 @@ export class TetrisGame extends Component {
         }
     }
 
-    // ---------- Public commands (called by input, UI buttons, tests...) ----------
+    // ---------- Public commands ----------
 
-    moveLeft()  { this.tryMove(0, -1); }
-    moveRight() { this.tryMove(0, +1); }
-
-    unlockDrop(){
-        this.dropLocker = false;
+    moveLeft() {
+        this.tryMove(0, -1);
     }
-    
+
+    moveRight() {
+        this.tryMove(0, +1);
+    }
+
+    unlockDrop() {
+        this._dropLocker = false;
+    }
+
     softDropInput() {
-        if (this.dropLocker) return;
-        
+        if(this._dropLocker) return;
+
         this.softDrop();
     }
     
-    private softDrop() {
-        if (this._gameOver) return;
+    softDrop() {
+        if (this._gameOver || this.isClearing) return;
         if (!this.collides(this._piece, this._pieceRow + 1, this._pieceCol)) {
             this._pieceRow++;
         } else {
@@ -100,7 +149,7 @@ export class TetrisGame extends Component {
     }
 
     hardDrop() {
-        if (this._gameOver) return;
+        if (this._gameOver || this.isClearing) return;
         let travelled = 0;
         while (!this.collides(this._piece, this._pieceRow + 1, this._pieceCol)) {
             this._pieceRow++;
@@ -112,12 +161,10 @@ export class TetrisGame extends Component {
     }
 
     rotatePiece() {
-        if (this._gameOver) return;
-        // Clockwise rotation = transpose + reverse rows
+        if (this._gameOver || this.isClearing) return;
         const rotated = this._piece[0].map((_, c) =>
             this._piece.map(row => row[c]).reverse()
         );
-        // Simple wall kicks
         for (const kick of [0, -1, 1, -2, 2]) {
             if (!this.collides(rotated, this._pieceRow, this._pieceCol + kick)) {
                 this._piece = rotated;
@@ -137,18 +184,20 @@ export class TetrisGame extends Component {
     // ---------- Internals ----------
 
     private initState() {
-        this._board = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
+        this._board = Array.from({length: ROWS}, () => new Array(COLS).fill(0));
         this._lines = 0;
         this.dropInterval = 0.8;
         this.dropTimer = 0;
         this._gameOver = false;
-        this.dropLocker = true;
+        this._dropLocker = true;
+        this._clearingRows = [];
+        this._clearTimer = 0;
         this._nextIdx = Math.floor(Math.random() * SHAPES.length);
         this.spawnPiece();
     }
 
     private tryMove(dRow: number, dCol: number) {
-        if (this._gameOver) return;
+        if (this._gameOver || this.isClearing) return;
         if (!this.collides(this._piece, this._pieceRow + dRow, this._pieceCol + dCol)) {
             this._pieceRow += dRow;
             this._pieceCol += dCol;
@@ -163,7 +212,7 @@ export class TetrisGame extends Component {
         this._pieceColor = idx + 1;
         this._pieceRow = 0;
         this._pieceCol = Math.floor((COLS - this._piece[0].length) / 2);
-        this.dropLocker = true;
+        this._dropLocker = true;
 
         if (this.collides(this._piece, this._pieceRow, this._pieceCol)) {
             this._gameOver = true;
@@ -179,25 +228,38 @@ export class TetrisGame extends Component {
                 }
             }
         }
-        this.clearLines();
-        this.spawnPiece();
+
+        const fullRows: number[] = [];
+        for (let r = 0; r < ROWS; r++) {
+            if (this._board[r].every(v => v !== 0)) fullRows.push(r);
+        }
+
+        if (fullRows.length > 0) {
+            // Enter clearing state; rows are removed when the animation ends.
+            this._clearingRows = fullRows;
+            this._clearTimer = 0;
+        } else {
+            this.spawnPiece();
+        }
     }
 
-    private clearLines() {
-        let cleared = 0;
-        for (let r = ROWS - 1; r >= 0; r--) {
-            if (this._board[r].every(v => v !== 0)) {
-                this._board.splice(r, 1);
-                this._board.unshift(new Array(COLS).fill(0));
-                cleared++;
-                r++; // re-check the row that just slid into this index
-            }
+    private finishClearing() {
+        const count = this._clearingRows.length;
+
+        // Ascending order keeps the remaining indices valid:
+        // removing row r and unshifting a fresh row on top only
+        // shifts rows ABOVE r, and all later targets are below.
+        for (const r of [...this._clearingRows].sort((a, b) => a - b)) {
+            this._board.splice(r, 1);
+            this._board.unshift(new Array(COLS).fill(0));
         }
-        if (cleared > 0) {
-            this._lines += cleared;
-            this.dropInterval = Math.max(0.1, 0.8 - Math.floor(this._lines / 10) * 0.07);
-            this.events.emit(GameEvent.LinesCleared, cleared);
-        }
+
+        this._clearingRows = [];
+        this._clearTimer = 0;
+        this._lines += count;
+        this.dropInterval = Math.max(0.1, 0.8 - Math.floor(this._lines / 10) * 0.07);
+        this.events.emit(GameEvent.LinesCleared, count);
+        this.spawnPiece();
     }
 
     private collides(shape: ReadonlyArray<ReadonlyArray<number>>, row: number, col: number): boolean {
