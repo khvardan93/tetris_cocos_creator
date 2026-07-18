@@ -43,6 +43,7 @@ export class TetrisGame extends Component {
 
     private dropTimer = 0;
     private dropInterval = 0.8;
+    private dropLocker = true;
 
     // ---------- Read-only view of the state ----------
 
@@ -77,7 +78,17 @@ export class TetrisGame extends Component {
     moveLeft()  { this.tryMove(0, -1); }
     moveRight() { this.tryMove(0, +1); }
 
-    softDrop() {
+    unlockDrop(){
+        this.dropLocker = false;
+    }
+    
+    softDropInput() {
+        if (this.dropLocker) return;
+        
+        this.softDrop();
+    }
+    
+    private softDrop() {
         if (this._gameOver) return;
         if (!this.collides(this._piece, this._pieceRow + 1, this._pieceCol)) {
             this._pieceRow++;
@@ -131,6 +142,7 @@ export class TetrisGame extends Component {
         this.dropInterval = 0.8;
         this.dropTimer = 0;
         this._gameOver = false;
+        this.dropLocker = true;
         this._nextIdx = Math.floor(Math.random() * SHAPES.length);
         this.spawnPiece();
     }
@@ -151,6 +163,7 @@ export class TetrisGame extends Component {
         this._pieceColor = idx + 1;
         this._pieceRow = 0;
         this._pieceCol = Math.floor((COLS - this._piece[0].length) / 2);
+        this.dropLocker = true;
 
         if (this.collides(this._piece, this._pieceRow, this._pieceCol)) {
             this._gameOver = true;

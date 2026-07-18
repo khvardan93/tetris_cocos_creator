@@ -15,11 +15,12 @@ export class TetrisInput extends Component {
     onLoad() {
         this.game = this.getComponent(TetrisGame)!;
         input.on(Input.EventType.KEY_DOWN, this.onKeyDown, this);
-        input.on(Input.EventType.KEY_PRESSING, this.onKeyDown, this);
+        input.on(Input.EventType.KEY_PRESSING, this.onKeyPressing, this);
     }
 
     onDestroy() {
         input.off(Input.EventType.KEY_DOWN, this.onKeyDown, this);
+        input.off(Input.EventType.KEY_DOWN, this.onKeyPressing, this);
     }
 
     private onKeyDown(event: EventKeyboard) {
@@ -28,21 +29,34 @@ export class TetrisInput extends Component {
             return;
         }
         switch (event.keyCode) {
-            case KeyCode.ARROW_LEFT:  this.game.moveLeft();    break;
-            case KeyCode.ARROW_RIGHT: this.game.moveRight();   break;
-            case KeyCode.ARROW_DOWN:  this.game.softDrop();    break;
-            case KeyCode.ARROW_UP:    this.game.rotatePiece(); break;
-            case KeyCode.SPACE:       this.game.hardDrop();    break;
+            case KeyCode.ARROW_LEFT:
+                this.game.moveLeft();
+                break;
+            case KeyCode.ARROW_RIGHT:
+                this.game.moveRight();
+                break;
+            case KeyCode.ARROW_DOWN:
+                this.game.unlockDrop();
+                //this.game.softDrop();
+                break;
+            case KeyCode.ARROW_UP:
+                this.game.rotatePiece();
+                break;
+            case KeyCode.SPACE:
+                this.game.hardDrop();
+                break;
         }
     }
-    
+
     private onKeyPressing(event: EventKeyboard) {
         if (this.game.isGameOver) {
             return;
         }
-        
+
         switch (event.keyCode) {
-            case KeyCode.ARROW_DOWN:  this.game.softDrop();    break;
+            case KeyCode.ARROW_DOWN:
+                this.game.softDropInput();
+                break;
         }
     }
 }
