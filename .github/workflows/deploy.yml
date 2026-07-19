@@ -2,7 +2,8 @@ name: Build and Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -14,32 +15,57 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  CREATOR_VERSION: "3.8.8"
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container:
-      image: cocos/creator:3.8.8
+    runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Web (WebGL)
+      # Install Cocos Creator here using a verified installation method
+      # for Cocos Creator 3.8.8.
+
+      - name: Build Web
+        shell: pwsh
         run: |
-          /cocos/resources/CocosCreator \
-            --project "$GITHUB_WORKSPACE" \
-            --build "platform=web-desktop;buildPath=$GITHUB_WORKSPACE/build"
+          $creator = "PATH_TO_COCOS_CREATOR.exe"
+
+          & $creator `
+            --project "$env:GITHUB_WORKSPACE" `
+            --build "platform=web-mobile;buildPath=$env:GITHUB_WORKSPACE\build"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cocos Creator build failed."
+          }
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $path = "$env:GITHUB_WORKSPACE\build\web-mobile"
+
+          if (!(Test-Path $path)) {
+            Write-Host "Build directory not found."
+            Get-ChildItem "$env:GITHUB_WORKSPACE\build" -Recurse
+            throw "Expected Cocos build output was not found."
+          }
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: build/web-desktop
+          path: build/web-mobile
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
