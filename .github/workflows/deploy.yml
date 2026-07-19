@@ -1,9 +1,10 @@
-name: Build and Deploy to GitHub Pages
+name: Build Cocos Creator 3.8.8 and Deploy to GitHub Pages
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 permissions:
@@ -12,54 +13,208 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: github-pages
   cancel-in-progress: true
 
 env:
-  CREATOR_VERSION: "3.8.8"
+  COCOS_CREATOR_VERSION: "3.8.8"
 
 jobs:
   build:
+    name: Build Cocos Creator Web Project
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      # ---------------------------------------------------------
+      # 1. Checkout project
+      # ---------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Install Cocos Creator here using a verified installation method
-      # for Cocos Creator 3.8.8.
+      # ---------------------------------------------------------
+      # 2. Download Cocos Creator 3.8.8 installer
+      # ---------------------------------------------------------
+      - name: Download Cocos Creator 3.8.8
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ secrets.COCOS_CREATOR_INSTALLER_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:INSTALLER_URL)) {
+            throw "COCOS_CREATOR_INSTALLER_URL GitHub Secret is not configured."
+          }
 
-      - name: Build Web
+          $installer = "$env:RUNNER_TEMP\CocosCreator-3.8.8.exe"
+
+          Write-Host "Downloading Cocos Creator 3.8.8..."
+          Invoke-WebRequest `
+            -Uri $env:INSTALLER_URL `
+            -OutFile $installer
+
+          if (!(Test-Path $installer)) {
+            throw "Cocos Creator installer was not downloaded."
+          }
+
+          Write-Host "Installer downloaded to:"
+          Write-Host $installer
+
+      # ---------------------------------------------------------
+      # 3. Install Cocos Creator
+      # ---------------------------------------------------------
+      - name: Install Cocos Creator 3.8.8
         shell: pwsh
         run: |
-          $creator = "PATH_TO_COCOS_CREATOR.exe"
+          $installer = "$env:RUNNER_TEMP\CocosCreator-3.8.8.exe"
 
-          & $creator `
-            --project "$env:GITHUB_WORKSPACE" `
-            --build "platform=web-mobile;buildPath=$env:GITHUB_WORKSPACE\build"
+          Write-Host "Installing Cocos Creator 3.8.8..."
+
+          Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/S" `
+            -Wait `
+            -NoNewWindow
+
+          Write-Host "Cocos Creator installation completed."
+
+      # ---------------------------------------------------------
+      # 4. Find CocosCreator.exe
+      # ---------------------------------------------------------
+      - name: Locate Cocos Creator executable
+        shell: pwsh
+        run: |
+          Write-Host "Searching for CocosCreator.exe..."
+
+          $searchPaths = @(
+            "C:\Program Files",
+            "C:\Program Files (x86)",
+            "C:\CocosDashboard",
+            "C:\CocosCreator",
+            "$env:LOCALAPPDATA",
+            "$env:APPDATA"
+          )
+
+          $creator = Get-ChildItem `
+            -Path $searchPaths `
+            -Filter "CocosCreator.exe" `
+            -File `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if ($null -eq $creator) {
+            Write-Host "Cocos Creator executable was not found."
+
+            Write-Host "Searching entire C:\ drive..."
+          
+            $creator = Get-ChildItem `
+              -Path "C:\" `
+              -Filter "CocosCreator.exe" `
+              -File `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+
+          if ($null -eq $creator) {
+            throw "CocosCreator.exe was not found on the GitHub Actions runner."
+          }
+
+          Write-Host "Cocos Creator found:"
+          Write-Host $creator.FullName
+
+          "COCOS_CREATOR_PATH=$($creator.FullName)" >> $env:GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # 5. Print Cocos Creator version
+      # ---------------------------------------------------------
+      - name: Verify Cocos Creator
+        shell: pwsh
+        run: |
+          if (!(Test-Path "$env:COCOS_CREATOR_PATH")) {
+            throw "Cocos Creator executable does not exist."
+          }
+
+          Write-Host "Cocos Creator executable:"
+          Write-Host "$env:COCOS_CREATOR_PATH"
+
+      # ---------------------------------------------------------
+      # 6. Build project for Web
+      # ---------------------------------------------------------
+      - name: Build Web project
+        shell: pwsh
+        run: |
+          $projectPath = "$env:GITHUB_WORKSPACE"
+          $buildPath = "$env:GITHUB_WORKSPACE\build"
+
+          Write-Host "Project:"
+          Write-Host $projectPath
+
+          Write-Host "Build output:"
+          Write-Host $buildPath
+
+          if (Test-Path $buildPath) {
+            Remove-Item `
+              -Path $buildPath `
+              -Recurse `
+              -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $buildPath `
+            -Force | Out-Null
+
+          Write-Host "Starting Cocos Creator build..."
+
+          & "$env:COCOS_CREATOR_PATH" `
+            --project "$projectPath" `
+            --build "platform=web-mobile;buildPath=$buildPath"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Cocos Creator build failed."
+            throw "Cocos Creator build failed with exit code $LASTEXITCODE."
           }
 
-      - name: Verify build output
+          Write-Host "Cocos Creator build completed."
+
+      # ---------------------------------------------------------
+      # 7. Find generated Web build
+      # ---------------------------------------------------------
+      - name: Locate Web build output
         shell: pwsh
         run: |
-          $path = "$env:GITHUB_WORKSPACE\build\web-mobile"
+          Write-Host "Contents of build directory:"
 
-          if (!(Test-Path $path)) {
-            Write-Host "Build directory not found."
-            Get-ChildItem "$env:GITHUB_WORKSPACE\build" -Recurse
-            throw "Expected Cocos build output was not found."
+          if (!(Test-Path "$env:GITHUB_WORKSPACE\build")) {
+            throw "Build directory does not exist."
           }
 
-      - name: Upload Pages artifact
+          Get-ChildItem `
+            "$env:GITHUB_WORKSPACE\build" `
+            -Recurse
+
+          $webBuild = "$env:GITHUB_WORKSPACE\build\web-mobile"
+
+          if (!(Test-Path $webBuild)) {
+            throw "Expected Web build directory was not found: $webBuild"
+          }
+
+          Write-Host "Web build found:"
+          Write-Host $webBuild
+
+      # ---------------------------------------------------------
+      # 8. Upload GitHub Pages artifact
+      # ---------------------------------------------------------
+      - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/web-mobile
 
+  # -----------------------------------------------------------
+  # 9. Deploy to GitHub Pages
+  # -----------------------------------------------------------
   deploy:
+    name: Deploy to GitHub Pages
     needs: build
+
     runs-on: ubuntu-latest
 
     environment:
@@ -67,6 +222,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
